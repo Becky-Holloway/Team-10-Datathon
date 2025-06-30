@@ -1,0 +1,92 @@
+--Notes on the Views
+--[RaceID] is common across all tables and can be used as a key
+--All view tables filter on races that took place on or after 2014 (Start of F1 hybrid era) 
+
+CREATE view vw_constructor_race_results AS (
+-- This view joins points data from Constructor_Results, position data from Constructor_Standings and race name, race year data
+select cr.constructorresultsid, f.year, f.round, f.raceid, f.name as Race_Name, cr.constructorid, c.name as Constructor_Name, cr.points as Race_Points, ROW_NUMBER() OVER (partition by f.name, f.round order by cr.points desc) as Race_Rank, cs.points as Points_Standings, cs.position as Position_Standings, cs.wins
+from playground.datathon.constructor_results cr
+join playground.datathon.constructors c on c.constructorid = cr.constructorid
+join playground.datathon.races f on f.raceid = cr.raceid
+join playground.datathon.constructor_standings cs on cs.constructorid = cr.constructorid and cs.raceid = cr.raceid
+where f.year >= 2014
+order by f.year, cr.raceid desc, cr.points desc
+)
+
+
+CREATE view vw_driver_standings AS (
+-- This view joins driver standings data with driver name, driver number, race name and date
+select ds.driverstandingsid, f.year, f.round, f.raceid, f.name as race_name, ds.driverid, CONCAT(d.forename, ' ', d.surname) as driver_name, d.number as driver_number, ds.points as points_standings, ds.position as position_standings, ds.positiontext, ds.wins
+from playground.datathon.driver_standings ds 
+join playground.datathon.drivers d on d.driverid = ds.driverid
+join playground.datathon.races f on f.raceid = ds.raceid
+where f.year >= 2014
+order by f.year, ds.raceid desc, ds.points desc
+)
+
+drop view vw_status
+CREATE view vw_status AS (
+--This view groups similar status into groups: Finished, Lapped, Technical Fault, Failed to qualify, Injury 
+select statusid, status,
+case when status = 'Finished' then status
+	when status like '+%' then 'Lapped'
+	when status in ('107% rule', 'Did not qualify', 'Did not prequalify') then 'Failed to qualify'
+	when status in ('Driver unwell', 'Driver injury', 'Injured', 'Eye injury', 'Injury', 'Illness') then 'Injury'
+    when status in ('Collision', 'Collision Damage', 'Accident', 'Fatal Accident', 'Spun off', 'Handling' ) then 'Driver fault or accident'
+else 'Technical fault'
+end as Status_Group
+from playground.datathon.status
+)
+
+drop view vw_results
+
+CREATE view vw_Results AS (
+-- This view joins results data with driver details, constructor name, race and track details
+-- New column added for position_delta = grid position - position order
+select  r.resultid, f.raceid, f.name as race_name, f.year, f.round, f.date as race_date, t.name as circuit_name, r.driverid, CONCAT(d.forename, ' ', d.surname) as driver_name, r.number as driver_number, r.constructorid, c.name as constructor_name, r.grid as grid_position, r.position, r.positionorder as race_position_order, (grid - positionorder) as position_delta, r.points, r.statusid, s.status, s.status_group, r.laps as laps_completed, r.time as time_behind_leader, r.milliseconds as elapsed_time_ms, r.fastestlap, r.rank as fastest_lap_rank, r.fastestlaptime, r.fastestlapspeed
+from playground.datathon.results r
+join playground.datathon.races f on f.raceid = r.raceid
+join playground.datathon.drivers d on d.driverid = r.driverid
+join playground.datathon.constructors c on c.constructorid = r.constructorid
+join vw_status s on s.statusid = r.statusid
+join playground.datathon.circuits t on t.circuitid = f.circuitid
+where f.year >= 2014
+order by f.raceid desc, r.positionorder
+)
+
+
+CREATE view vw_Qualifying AS (
+-- This view joins qualifying data with race name and year, driver name and constructor name
+select q.qualifyid, f.raceid, f.name as race_name, f.year, f.round, q.driverid, CONCAT(d.forename, ' ', d.surname) as driver_name, q.number as driver_number, q.constructorid, c.name as constructor_name, q.position, q1, q2, q3
+from playground.datathon.qualifying q
+join playground.datathon.races f on f.raceid = q.raceid
+join playground.datathon.drivers d on d.driverid = q.driverid
+join playground.datathon.constructors c on c.constructorid = q.constructorid
+where f.year >= 2014
+order by f.raceid desc
+)
+
+CREATE view vw_Pitstops AS (
+select f.raceid, f.name as racename, f.date, r.constructor_name, d.driverid, d.forename||' '||d.surname as driver_name, p.stop, p.lap, p.time as pitstop_time, p.duration, p.milliseconds as duration_milliseconds
+from playground.datathon.pit_stops p
+join playground.datathon.races f on p.raceid = f.raceid
+join playground.datathon.drivers d on p.driverid = d.driverid
+join vw_results r on r.raceid = p.raceid and r.driverid = p.driverid
+where f.year >= 2014
+order by p.raceid desc, driver_name, stop
+)
+
+
+create view vw_AllRaceStats as (
+
+SELECT r.DRIVERID, r.RESULTID, r.RACEID, r.RACE_DATE, r.CIRCUIT_NAME, r.DRIVER_NAME, r.DRIVER_NUMBER, r.CONSTRUCTORID, r.CONSTRUCTOR_NAME, r.GRID_POSITION, r.RACE_POSITION_ORDER, r.POINTS, r.STATUS, r.LAPS_COMPLETED, r.TIME_BEHIND_LEADER, r.FASTESTLAP, r.FASTEST_LAP_RANK, r.FASTESTLAPTIME, r.FASTESTLAPSPEED
+, d.POINTS_STANDINGS AS DRIVER_POINTS_STANDINGS, d.POSITION_STANDINGS AS DRIVER_POSITION_STANDINGS
+, c.POINTS_STANDINGS AS CONSTRUCTOR_POINTS_STANDINGS, c.POSITION_STANDINGS AS CONSTRUCTOR_POSITION_STANDINGS, c.WINS
+--, p.DATE,  p.STOP as PITSTOP_NUM, LAP as PITSTOP_LAP
+,  q.POSITION as QUALI_POSITION, Q1, Q2, Q3
+FROM vw_results r
+JOIN vw_driver_standings d ON d.raceid = r.raceid and d.driverid = r.driverid
+JOIN vw_constructor_race_results c ON c.raceid = r.raceid and c.constructorid = r.constructorid
+JOIN vw_qualifying q ON q.raceid = r.raceid and q.driverid = r.driverid
+--JOIN vw_pitstops p ON p.raceid = r.raceid and d.driverid = p.driverid
+)

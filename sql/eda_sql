@@ -1,0 +1,126 @@
+--Summary stats of hybrid era
+-- Number of unique races, drivers, teams, circuits analysed
+select count(distinct driverid) as drivers
+,count(distinct raceid) as races
+,count (distinct constructorid) as constructors
+,count (distinct circuit_name) as circuits
+from vw_results
+
+-- Total wins by constructor
+select year, constructor_name, count(resultid) as WinsCount
+from vw_results
+where race_position_order = 1
+group by year, constructor_name
+order by count(resultid) desc
+
+--Podium finishes by constructor
+select constructor_name, count(resultid) as WinsCount
+from vw_results
+where race_position_order in (1,2,3)
+group by constructor_name
+order by count(resultid) desc
+
+-- Constructor running leaderboard 2024 - output as pivot table
+select *
+from
+(select constructor_name, round, points_standings
+from vw_constructor_race_results
+where year = 2024
+order by points_standings desc) as leaderboard
+pivot (
+sum(points_standings)
+for round in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24)
+)
+
+-- Constructor running leaderboard 2024 - create line graph of points over rounds, with a line for each team
+-- Series: constructor / X axis: round / Y axis: points
+select constructor_name, round, points_standings
+from vw_constructor_race_results
+where year = 2024
+order by round, points_standings desc
+
+
+--Number of DNFs in top 4 teams
+select constructor_name, year, count(resultid) as count
+from vw_results
+where position is null --did not finish the race
+and constructor_name in ('McLaren', 'Mercedes', 'Red Bull', 'Ferrari')
+group by constructor_name, year
+order by constructor_name, year, count desc
+--Note: Maclaren had no failures in 2024 so this row is missing in the results
+
+--Cause of DNFs in Mclaren / Mercedes
+select constructor_name, year, status_group, count(resultid) as count
+from vw_results
+where position is null --did not finish the race
+--and constructor_name = 'McLaren'
+and constructor_name = 'Mercedes'
+group by constructor_name, year, status_group
+order by constructor_name, year, count desc
+
+
+-- Driver faults in top 4 teams in 2024
+-- Clustered bar chart: X axis = status, Y axis = count, series = teams
+select driver_name, constructor_name, status, count(raceid) as count
+from vw_results
+where year = 2024 --if looking for last 5yrs of data then change to: year between 2019 and 2024
+and status_group like 'Driver%'
+and constructor_name in ('McLaren', 'Mercedes', 'Red Bull', 'Ferrari')
+group by driver_name, constructor_name, status
+order by driver_name, count desc
+
+--Team wins per circuit 2014-2024 (Which teams dominated which circuits?)
+-- Clustered bar chart: X axis = circuits, Y axis = #wins, series = teams
+select constructor_name, circuit_name, c.country, count(raceid) as wins
+from vw_results r
+join playground.datathon.circuits c on r.circuit_name = c.name
+where race_position_order = 1
+and year between 2015 and 2024
+group by constructor_name, circuit_name, c.country
+having wins >1 --results only showing teams who have won the circtuit more than once
+order by wins desc, circuit_name
+
+-- Driver performance measured by position delta
+-- Position delta = grid position - race position ie the number of positions gained/lost from start of race to finish
+select constructor_name, year,  AVG(position_delta) OVER (PARTITION BY driver_name) as avg_position_delta 
+from vw_results
+where constructor_name in ('McLaren', 'Mercedes', 'Red Bull', 'Ferrari')
+order by avg_position_delta desc
+
+
+-- Average pit stop duration in top 4 teams
+select distinct p.racename, p.constructor_name, (AVG(duration_milliseconds) OVER (PARTITION BY p.constructor_name, p.racename))/1000 as avg_pitstop_duration_s
+from vw_pitstops p
+where p.constructor_name in ( 'McLaren' , 'Mercedes')
+--and r.constructor_name = 'Mercedes'
+order by racename
+
+
+-- Average pit stop duration in top 4 teams
+select distinct p.racename, p.constructor_name, r.race_position_order, (AVG(duration_milliseconds) OVER (PARTITION BY p.driver_name, p.racename))/1000 as avg_pitstop_duration_s
+from vw_pitstops p
+join vw_results r on r.raceid = p.raceid and r.driverid = p.driverid
+where p.constructor_name in ( 'McLaren' , 'Mercedes')
+--and r.constructor_name = 'Mercedes'
+order by racename
+
+
+-- Top fastest lap
+select year, constructor_name, driver_name, circuit_name, fastestlaptime, fastestlapspeed
+from vw_results
+where fastest_lap_rank = 1
+
+--Fastest lap vs race position order 
+select driver_name, constructor_name, race_name, year, fastest_lap_rank, race_position_order
+from vw_results
+where fastest_lap_rank is not null and fastest_lap_rank <> 0
+and race_position_order is not null and race_position_order <> 0
+order by year desc, race_name, fastest_lap_rank
+
+--Quali position vs race position
+select driver_name, constructor_name, race_name, year, grid_position, position_delta
+from vw_results
+where grid_position is not null and grid_position <> 0
+--and race_position_order is not null and race_position_order <> 0
+order by year desc, race_name, fastest_lap_rank
+
